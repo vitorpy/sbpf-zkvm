@@ -46,25 +46,26 @@ pub enum MemoryOpType {
     Write,
 }
 
-/// State of all BPF registers (r0-r10)
+/// State of all BPF registers (r0-r10) and PC
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegisterState {
-    /// General purpose registers r0-r10
+    /// General purpose registers r0-r10 and PC (r11)
     /// r0: return value
     /// r1-r5: function arguments
     /// r6-r9: callee saved
     /// r10: frame pointer (read-only)
-    pub regs: [u64; 11],
+    /// r11: program counter
+    pub regs: [u64; 12],
 }
 
 impl RegisterState {
     /// Create new register state with all zeros
     pub fn new() -> Self {
-        Self { regs: [0; 11] }
+        Self { regs: [0; 12] }
     }
 
     /// Create register state from array
-    pub fn from_regs(regs: [u64; 11]) -> Self {
+    pub fn from_regs(regs: [u64; 12]) -> Self {
         Self { regs }
     }
 }
