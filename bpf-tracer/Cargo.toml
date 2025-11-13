@@ -7,6 +7,8 @@ license.workspace = true
 
 [dependencies]
 solana-sbpf = { workspace = true }
+solana-account = { workspace = true }
+solana-pubkey = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

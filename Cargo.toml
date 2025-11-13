@@ -21,6 +21,10 @@ repository = "https://github.com/yourusername/sbpf-zkvm"
 # Solana BPF VM (from submodule)
 solana-sbpf = { path = "deps/sbpf" }
 
+# Solana modular crates for account structures
+solana-account = "3.2.0"
+solana-pubkey = { version = "4.0.0", features = ["serde"] }
+
 # Halo2 ZK library (Axiom fork from submodule)
 halo2-base = { path = "deps/halo2-lib/halo2-base", features = ["halo2-axiom", "display"] }
 halo2-ecc = { path = "deps/halo2-lib/halo2-ecc", features = ["halo2-axiom"] }

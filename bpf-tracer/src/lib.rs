@@ -37,7 +37,9 @@
 pub mod trace;
 pub mod vm;
 
-pub use trace::{ExecutionTrace, InstructionTrace, MemoryOperation, MemoryOpType, RegisterState};
+pub use trace::{
+    AccountState, AccountStateChange, ExecutionTrace, InstructionTrace, RegisterState,
+};
 pub use vm::trace_program;
 
 /// Result type for BPF tracer operations
