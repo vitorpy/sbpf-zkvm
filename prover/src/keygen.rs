@@ -3,16 +3,29 @@
 //! Handles generation, caching, and loading of Halo2 proving and verifying keys.
 
 use anyhow::{Context, Result};
-use halo2_base::halo2_proofs::{
-    plonk::{ProvingKey, VerifyingKey},
-    poly::kzg::commitment::ParamsKZG,
-    poly::commitment::Params,
-    SerdeFormat,
+use bpf_tracer::ExecutionTrace;
+use halo2_base::{
+    gates::{
+        circuit::{
+            builder::BaseCircuitBuilder,
+            BaseCircuitParams,
+            CircuitBuilderStage,
+        },
+        flex_gate::GateChip,
+    },
+    halo2_proofs::{
+        plonk::{keygen_pk, keygen_vk, ProvingKey, VerifyingKey},
+        poly::kzg::commitment::ParamsKZG,
+        poly::commitment::Params,
+        SerdeFormat,
+    },
+    halo2_proofs::halo2curves::bn256::{Bn256, Fr, G1Affine},
 };
-use halo2_base::halo2_proofs::halo2curves::bn256::{Bn256, G1Affine};
+use rand::rngs::OsRng;
 use std::fs::{self, File};
 use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
+use zk_circuits::CounterCircuit;
 
 /// Configuration for key generation
 #[derive(Debug, Clone)]
@@ -77,34 +90,81 @@ impl KeyPair {
     ///
     /// If cached keys exist and are valid, loads them from disk.
     /// Otherwise, generates new keys and caches them.
-    pub fn load_or_generate(_config: &KeygenConfig) -> Result<Self> {
-        // TODO: Implement actual key generation once CounterCircuit implements Circuit trait
-        //
-        // The implementation will follow this pattern:
-        // 1. Check if cached keys exist using config.params_path(), config.vk_path(), config.pk_path()
-        // 2. If they exist, load from disk using load_params, load_vk, load_pk
-        // 3. If not, generate using:
-        //    - Setup params: ParamsKZG::setup(config.k, OsRng)
-        //    - Create dummy circuit: CounterCircuit::from_trace(ExecutionTrace::new())
-        //    - Generate VK: keygen_vk(&params, &circuit)
-        //    - Generate PK: keygen_pk(&params, vk, &circuit)
-        // 4. Cache the generated keys to disk
-        //
-        // For now, return an error indicating this needs Circuit trait implementation
+    pub fn load_or_generate(config: &KeygenConfig) -> Result<Self> {
+        // Check if cached keys exist
+        if Self::cache_exists(config) {
+            tracing::info!("Found cached keys, attempting to load...");
+            match Self::load_from_cache(config) {
+                Ok(keypair) => {
+                    tracing::info!("Successfully loaded keys from cache");
+                    return Ok(keypair);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to load cached keys: {}. Regenerating...", e);
+                }
+            }
+        }
 
-        anyhow::bail!(
-            "Key generation not yet implemented. \
-             CounterCircuit must implement halo2_proofs::plonk::Circuit trait first. \
-             See halo2-lib/halo2-base/src/gates/tests/bitwise_rotate.rs for reference implementation."
-        )
+        // Generate new keys
+        tracing::info!("Generating new keys...");
+        let keypair = Self::generate(config)?;
+
+        // Cache the generated keys
+        keypair.save_to_cache(config)
+            .context("Failed to cache generated keys")?;
+
+        Ok(keypair)
     }
 
     /// Generate new keys (bypasses cache)
-    pub fn generate(_config: &KeygenConfig) -> Result<Self> {
-        // TODO: Implement key generation
-        // This is called by load_or_generate when cache miss occurs
+    pub fn generate(config: &KeygenConfig) -> Result<Self> {
+        tracing::info!(
+            "Generating proving and verifying keys for k={}, lookup_bits={}",
+            config.k,
+            config.lookup_bits
+        );
 
-        anyhow::bail!("Key generation not yet implemented")
+        // Set up KZG parameters
+        tracing::info!("Setting up KZG parameters...");
+        let params = ParamsKZG::<Bn256>::setup(config.k, OsRng);
+
+        // Set environment variable for lookup bits
+        std::env::set_var("LOOKUP_BITS", config.lookup_bits.to_string());
+
+        // Create a dummy circuit for keygen
+        tracing::info!("Creating dummy circuit for keygen...");
+        let dummy_trace = ExecutionTrace::new();
+        let circuit_logic = CounterCircuit::from_trace(dummy_trace);
+
+        // Build the circuit using BaseCircuitBuilder
+        let mut builder = BaseCircuitBuilder::<Fr>::from_stage(CircuitBuilderStage::Keygen)
+            .use_k(config.k as usize)
+            .use_lookup_bits(config.lookup_bits);
+
+        // Create a gate chip
+        let gate = GateChip::<Fr>::default();
+
+        // Synthesize the circuit
+        circuit_logic.synthesize(builder.main(0), &gate)
+            .context("Failed to synthesize circuit")?;
+
+        // Configure the builder
+        builder.calculate_params(Some(9));
+
+        // Generate verifying key
+        tracing::info!("Generating verifying key...");
+        let vk = keygen_vk(&params, &builder)
+            .context("Failed to generate verifying key")?;
+
+        // Generate proving key
+        tracing::info!("Generating proving key...");
+        let pk = keygen_pk(&params, vk, &builder)
+            .context("Failed to generate proving key")?;
+
+        let vk = pk.get_vk().clone();
+
+        tracing::info!("Key generation complete");
+        Ok(Self { params, pk, vk })
     }
 
     /// Load keys from cache
@@ -178,12 +238,21 @@ fn save_params(params: &ParamsKZG<Bn256>, path: &Path) -> Result<()> {
 /// Load verifying key from file
 fn load_vk(
     _params: &ParamsKZG<Bn256>,
-    _path: &Path,
+    path: &Path,
 ) -> Result<VerifyingKey<G1Affine>> {
-    // TODO: Implement VK loading once CounterCircuit implements Circuit trait
-    // The read function requires a ConcreteCircuit type parameter:
-    // VerifyingKey::<G1Affine>::read::<BufReader<File>, CounterCircuit>(...)
-    anyhow::bail!("VK loading not yet implemented - requires Circuit trait on CounterCircuit")
+    let file = File::open(path)
+        .with_context(|| format!("Failed to open VK file: {:?}", path))?;
+    let mut reader = BufReader::new(file);
+
+    // Use default circuit params for loading (values don't matter for deserialization)
+    let params = BaseCircuitParams::default();
+
+    VerifyingKey::<G1Affine>::read::<_, BaseCircuitBuilder<Fr>>(
+        &mut reader,
+        SerdeFormat::RawBytesUnchecked,
+        params,
+    )
+    .with_context(|| format!("Failed to deserialize VK from {:?}", path))
 }
 
 /// Save verifying key to file
@@ -201,12 +270,21 @@ fn save_vk(vk: &VerifyingKey<G1Affine>, path: &Path) -> Result<()> {
 /// Load proving key from file
 fn load_pk(
     _params: &ParamsKZG<Bn256>,
-    _path: &Path,
+    path: &Path,
 ) -> Result<ProvingKey<G1Affine>> {
-    // TODO: Implement PK loading once CounterCircuit implements Circuit trait
-    // The read function requires a ConcreteCircuit type parameter:
-    // ProvingKey::<G1Affine>::read::<BufReader<File>, CounterCircuit>(...)
-    anyhow::bail!("PK loading not yet implemented - requires Circuit trait on CounterCircuit")
+    let file = File::open(path)
+        .with_context(|| format!("Failed to open PK file: {:?}", path))?;
+    let mut reader = BufReader::new(file);
+
+    // Use default circuit params for loading (values don't matter for deserialization)
+    let params = BaseCircuitParams::default();
+
+    ProvingKey::<G1Affine>::read::<_, BaseCircuitBuilder<Fr>>(
+        &mut reader,
+        SerdeFormat::RawBytesUnchecked,
+        params,
+    )
+    .with_context(|| format!("Failed to deserialize PK from {:?}", path))
 }
 
 /// Save proving key to file

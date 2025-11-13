@@ -15,7 +15,10 @@
       "Bash(git fetch:*)",
       "Bash(python3:*)",
       "Bash(git push)",
-      "Bash(git worktree:*)"
+      "Bash(git worktree:*)",
+      "Bash(cargo build:*)",
+      "Bash(cargo update:*)",
+      "Bash(cargo test:*)"
     ],
     "deny": [],
     "ask": []

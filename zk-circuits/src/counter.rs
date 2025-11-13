@@ -32,27 +32,13 @@ impl CounterCircuit {
         Self { trace }
     }
 
-    /// Get the number of constraints in this circuit
-    ///
-    /// Returns an estimate of the circuit complexity
-    pub fn num_constraints(&self) -> usize {
-        // Rough estimate: each instruction needs ~50 constraints
-        // (register checks, arithmetic operations, etc.)
-        self.trace.instruction_count() * 50
-    }
-
     /// Synthesize the circuit constraints
     ///
     /// This method builds the complete constraint system proving
     /// correct execution of the counter program.
     ///
-    /// Note: This is a simplified MVP implementation. A production version would:
-    /// 1. Implement proper Halo2 Circuit trait
-    /// 2. Hash initial/final states for public inputs
-    /// 3. Add memory consistency checks
-    /// 4. Implement instruction dispatch logic
-    /// 5. Add range checks for 64-bit arithmetic
-    pub fn synthesize_with_context<F: ScalarField>(
+    /// This is intended to be called from within a circuit builder context.
+    pub fn synthesize<F: ScalarField>(
         &self,
         ctx: &mut Context<F>,
         gate: &impl GateInstructions<F>,
@@ -94,6 +80,15 @@ impl CounterCircuit {
         Ok(())
     }
 
+    /// Get the number of constraints in this circuit
+    ///
+    /// Returns an estimate of the circuit complexity
+    pub fn num_constraints(&self) -> usize {
+        // Rough estimate: each instruction needs ~50 constraints
+        // (register checks, arithmetic operations, etc.)
+        self.trace.instruction_count() * 50
+    }
+
     /// Helper to load a RegisterState as assigned values
     fn load_register_state<F: ScalarField>(
         &self,
@@ -120,8 +115,8 @@ mod tests {
     #[test]
     fn test_counter_circuit_simple_trace() {
         // Create a simple execution trace with one instruction
-        let initial_regs = RegisterState::from_regs([0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]);
-        let after_regs = RegisterState::from_regs([0, 52, 20, 30, 40, 50, 60, 70, 80, 90, 100]);
+        let initial_regs = RegisterState::from_regs([0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 0]);
+        let after_regs = RegisterState::from_regs([0, 52, 20, 30, 40, 50, 60, 70, 80, 90, 100, 8]);
         let final_regs = after_regs.clone();
 
         let instr = InstructionTrace {
@@ -133,16 +128,16 @@ mod tests {
 
         let trace = ExecutionTrace {
             instructions: vec![instr],
-            memory_ops: vec![],
+            account_states: vec![],
             initial_registers: initial_regs,
             final_registers: final_regs,
         };
 
         let circuit = CounterCircuit::from_trace(trace);
 
-        // Test synthesis
+        // Test synthesis using the new pattern
         base_test().run_gate(|ctx, gate| {
-            circuit.synthesize_with_context(ctx, gate).unwrap();
+            circuit.synthesize(ctx, gate).unwrap();
         });
     }
 }
