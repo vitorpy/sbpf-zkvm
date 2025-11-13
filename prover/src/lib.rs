@@ -31,9 +31,9 @@ pub fn generate_witness(trace: &ExecutionTrace) -> Result<Vec<u8>> {
     let witness = Witness::from_trace(trace)?;
 
     tracing::debug!(
-        "Witness generated: {} instructions, {} memory ops, {} register states",
+        "Witness generated: {} instructions, {} account changes, {} register states",
         witness.instruction_count(),
-        witness.memory_op_count(),
+        witness.account_change_count(),
         witness.instruction_register_states.len()
     );
 

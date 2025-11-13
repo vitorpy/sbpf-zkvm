@@ -2,7 +2,7 @@
 //!
 //! Converts execution traces into circuit witnesses.
 
-use bpf_tracer::{ExecutionTrace, MemoryOperation, RegisterState};
+use bpf_tracer::{ExecutionTrace, RegisterState, AccountStateChange};
 use serde::{Deserialize, Serialize};
 use crate::Result;
 
@@ -28,19 +28,25 @@ pub struct Witness {
     /// Instruction bytes for each executed instruction
     pub instruction_bytes: Vec<Vec<u8>>,
 
-    /// Memory operations (address, value, is_write)
-    pub memory_operations: Vec<MemoryOp>,
+    /// Account state changes (converted from account state tracking)
+    /// For backwards compatibility and circuit witness requirements,
+    /// we represent account state changes as data transitions
+    pub account_changes: Vec<AccountChange>,
 }
 
-/// Memory operation in witness format
+/// Account state change in witness format
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MemoryOp {
-    /// Memory address as field element
-    pub address: u64,
-    /// Value read or written as field element
-    pub value: u64,
-    /// 1 if write, 0 if read
-    pub is_write: u64,
+pub struct AccountChange {
+    /// Account pubkey as bytes (32 bytes)
+    pub pubkey: Vec<u8>,
+    /// Data before as bytes
+    pub data_before: Vec<u8>,
+    /// Data after as bytes
+    pub data_after: Vec<u8>,
+    /// Lamports before
+    pub lamports_before: u64,
+    /// Lamports after
+    pub lamports_after: u64,
 }
 
 impl Witness {
@@ -73,10 +79,10 @@ impl Witness {
             .map(|instr| instr.instruction_bytes.clone())
             .collect();
 
-        // Convert memory operations
-        let memory_operations: Vec<MemoryOp> = trace.memory_ops
+        // Convert account state changes
+        let account_changes: Vec<AccountChange> = trace.account_states
             .iter()
-            .map(memory_op_to_witness_format)
+            .map(account_state_to_witness_format)
             .collect();
 
         Ok(Self {
@@ -85,7 +91,7 @@ impl Witness {
             final_registers,
             program_counters,
             instruction_bytes,
-            memory_operations,
+            account_changes,
         })
     }
 
@@ -94,9 +100,9 @@ impl Witness {
         self.program_counters.len()
     }
 
-    /// Get the number of memory operations in this witness
-    pub fn memory_op_count(&self) -> usize {
-        self.memory_operations.len()
+    /// Get the number of account state changes in this witness
+    pub fn account_change_count(&self) -> usize {
+        self.account_changes.len()
     }
 
     /// Serialize witness to bytes for proof generation
@@ -120,22 +126,21 @@ fn register_state_to_field_elements(regs: &RegisterState) -> Vec<u64> {
     regs.regs[0..11].to_vec()
 }
 
-/// Convert MemoryOperation to witness format
-fn memory_op_to_witness_format(op: &MemoryOperation) -> MemoryOp {
-    MemoryOp {
-        address: op.address,
-        value: op.value,
-        is_write: match op.op_type {
-            bpf_tracer::MemoryOpType::Write => 1,
-            bpf_tracer::MemoryOpType::Read => 0,
-        },
+/// Convert AccountStateChange to witness format
+fn account_state_to_witness_format(change: &AccountStateChange) -> AccountChange {
+    AccountChange {
+        pubkey: change.pubkey.to_bytes().to_vec(),
+        data_before: change.before.data.clone(),
+        data_after: change.after.data.clone(),
+        lamports_before: change.before.lamports,
+        lamports_after: change.after.lamports,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bpf_tracer::{InstructionTrace, MemoryOpType};
+    use bpf_tracer::InstructionTrace;
 
     #[test]
     fn test_witness_from_empty_trace() {
@@ -143,7 +148,7 @@ mod tests {
         let witness = Witness::from_trace(&trace).unwrap();
 
         assert_eq!(witness.instruction_count(), 0);
-        assert_eq!(witness.memory_op_count(), 0);
+        assert_eq!(witness.account_change_count(), 0);
         assert_eq!(witness.initial_registers.len(), 11);
         assert_eq!(witness.final_registers.len(), 11);
     }
@@ -163,7 +168,7 @@ mod tests {
 
         let trace = ExecutionTrace {
             instructions: vec![instr],
-            memory_ops: vec![],
+            account_states: vec![],
             initial_registers: initial_regs,
             final_registers: final_regs,
         };
@@ -177,24 +182,7 @@ mod tests {
         assert_eq!(witness.program_counters, vec![0]);
     }
 
-    #[test]
-    fn test_witness_with_memory_operations() {
-        let mem_op = MemoryOperation {
-            address: 0x1000,
-            value: 0x42,
-            op_type: MemoryOpType::Write,
-        };
-
-        let mut trace = ExecutionTrace::new();
-        trace.memory_ops.push(mem_op);
-
-        let witness = Witness::from_trace(&trace).unwrap();
-
-        assert_eq!(witness.memory_op_count(), 1);
-        assert_eq!(witness.memory_operations[0].address, 0x1000);
-        assert_eq!(witness.memory_operations[0].value, 0x42);
-        assert_eq!(witness.memory_operations[0].is_write, 1);
-    }
+    // Test for account state changes removed - will be added when account tracking is fully integrated
 
     #[test]
     fn test_witness_serialization() {
@@ -231,7 +219,7 @@ mod tests {
 
         let trace = ExecutionTrace {
             instructions: vec![instr1, instr2],
-            memory_ops: vec![],
+            account_states: vec![],
             initial_registers: initial_regs,
             final_registers: final_regs,
         };

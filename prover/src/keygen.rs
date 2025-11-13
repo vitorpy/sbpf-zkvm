@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use halo2_base::halo2_proofs::{
     plonk::{ProvingKey, VerifyingKey},
     poly::kzg::commitment::ParamsKZG,
-    poly::commitment::{Params, ParamsProver},
+    poly::commitment::Params,
     SerdeFormat,
 };
 use halo2_base::halo2_proofs::halo2curves::bn256::{Bn256, G1Affine};

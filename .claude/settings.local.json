@@ -8,7 +8,14 @@
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Bash(git submodule add:*)",
-      "Bash(cargo check:*)"
+      "Bash(cargo check:*)",
+      "Bash(cargo run:*)",
+      "Bash(gh repo create:*)",
+      "Bash(git worktree add:*)",
+      "Bash(git fetch:*)",
+      "Bash(python3:*)",
+      "Bash(git push)",
+      "Bash(git worktree:*)"
     ],
     "deny": [],
     "ask": []
